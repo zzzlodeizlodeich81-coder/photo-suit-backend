@@ -22,10 +22,12 @@ class ContentRequest(BaseModel):
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "AI Photo & Video Generator API"}
+    return {"status": "ok", "message": "AI Content Studio API"}
 
 
+# Универсальный роут для запросов
 @app.post("/api/generate")
+@app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
     try:
         api_token = os.environ.get("REPLICATE_API_TOKEN")
@@ -36,7 +38,7 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token, timeout=300.0)
 
-        # 1. Если запросили ФОТО
+        # 1. Генерация ФОТО (FLUX Schnell)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -47,7 +49,7 @@ async def generate_content(req: ContentRequest):
                 },
             )
 
-        # 2. Если запросили ВИДЕО
+        # 2. Генерация ВИДЕО (MiniMax Video)
         elif req.mode == "video":
             output = client.run(
                 "minimax/video-01",
@@ -58,11 +60,10 @@ async def generate_content(req: ContentRequest):
             )
         else:
             raise HTTPException(
-                status_code=400,
-                detail="Invalid mode. Use 'photo' or 'video'.",
+                status_code=400, detail="Invalid mode. Use 'photo' or 'video'."
             )
 
-        # Парсим ответ
+        # Получаем URL результата
         url = None
         if hasattr(output, "url"):
             url = str(output.url)
@@ -72,15 +73,11 @@ async def generate_content(req: ContentRequest):
             url = output
 
         if url:
-            return {
-                "status": "success",
-                "mode": req.mode,
-                "output_url": url,
-            }
+            return {"status": "success", "mode": req.mode, "output_url": url}
 
         return {
             "status": "error",
-            "error": f"Модель не вернула результат: {output}",
+            "error": f"Модель не вернула URL: {output}",
         }
 
     except Exception as e:
