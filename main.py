@@ -21,13 +21,9 @@ class PhotoRequest(BaseModel):
     image: str
 
 
-# Картинка шаблона костюма
-TARGET_SUIT_IMAGE = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1000&auto=format&fit=crop"
-
-
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "Face Swap Backend is Online"}
+    return {"status": "ok", "message": "FLUX Photo Suit Backend is Live"}
 
 
 @app.post("/api/process-photo")
@@ -41,7 +37,7 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # Декодируем base64 в байты
+        # 1. Декодируем base64 во внутренний поток байтов
         raw_image_data = req.image
         if "," in raw_image_data:
             raw_image_data = raw_image_data.split(",")[1]
@@ -49,15 +45,26 @@ async def process_photo(req: PhotoRequest):
         image_bytes = base64.b64decode(raw_image_data)
         file_obj = io.BytesIO(image_bytes)
 
-        # 1. Загружаем файл НАПРЯМУЮ в официальное хранилище Replicate
+        # 2. Загружаем исходник в официальное CDN-хранилище Replicate
         uploaded_file = client.files.create(file_obj)
 
-        # 2. Запускаем модель lucataco/modelscope-facefusion через официальную ссылку Replicate
+        # 3. Промпт для генерации идеального бизнес-костюма
+        prompt = (
+            "A professional studio portrait of the person from the input image, "
+            "wearing a modern, perfectly tailored dark navy blue business suit with a crisp white shirt and tie. "
+            "Cinematic studio lighting, 8k resolution, highly detailed face, photo realistic, sharp focus."
+        )
+
+        # 4. Запускаем проверенную генеративную модель FLUX-Dev Image-to-Image
         output = client.run(
-            "lucataco/modelscope-facefusion:9a429854842207b4f3c163fac45732d841196929f214f440536c0a0cbe5c3459",
+            "black-forest-labs/flux-dev",
             input={
-                "template_image": TARGET_SUIT_IMAGE,
-                "user_image": uploaded_file.urls["get"],
+                "image": uploaded_file,
+                "prompt": prompt,
+                "prompt_strength": 0.65,  # 0.65 сохраняет черты лица и меняет одежду/фон
+                "num_inference_steps": 28,
+                "guidance_scale": 3.5,
+                "output_format": "jpg",
             },
         )
 
