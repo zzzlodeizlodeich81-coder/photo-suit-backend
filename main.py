@@ -19,7 +19,6 @@ class PhotoRequest(BaseModel):
     image: str
 
 
-# Фото отличного делового костюма на прозрачном/нейтральном фоне
 TARGET_SUIT_IMAGE = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1000&auto=format&fit=crop"
 
 
@@ -37,21 +36,27 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # Вызываем строго проверенную модель со страницы Replicate
         output = client.run(
             "codeplugtech/face-swap:278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",
             input={
-                "input_image": TARGET_SUIT_IMAGE,  # Костюм
-                "swap_image": req.image,            # Твоё лицо
+                "input_image": TARGET_SUIT_IMAGE,
+                "swap_image": req.image,
             },
         )
 
-        if output:
-            # Replicate возвращает объект FileOutput, берем его URL
-            output_url = str(output.url) if hasattr(output, "url") else str(output)
-            return {"status": "success", "output_url": output_url}
+        # Вытягиваем URL из ответа, обрабатывая все возможные форматы Replicate
+        url = None
+        if hasattr(output, "url"):
+            url = str(output.url)
+        elif isinstance(output, list) and len(output) > 0:
+            url = str(output[0])
+        elif isinstance(output, str):
+            url = output
 
-        return {"status": "error", "error": "Не удалось сгенерировать фото"}
+        if url:
+            return {"status": "success", "output_url": url}
+
+        return {"status": "error", "error": f"Пустой ответ от Replicate: {output}"}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
