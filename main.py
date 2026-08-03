@@ -32,15 +32,17 @@ async def process_photo(req: PhotoRequest):
         if not api_token:
             raise HTTPException(status_code=500, detail="Replicate token not set")
 
-        # Вызываем стабильную модель Replicate без устаревших хешей
+        # --- ВОТ ЭТУ ЧАСТЬ МЫ ОБНОВИЛИ ---
+        # Мы используем новую, стабильную версию модели Flux.
         output = replicate.run(
-            "stability-ai/sdxl",
+            "lucataco/flux-dev-photorealistic:0e1ff44c77508f71253c0724a29a1b55977a4192b95b871216d0012e8b62842c",
             input={
-                "prompt": "man in a sharp dark business suit, white shirt and tie, studio lighting, formal photo style, high resolution",
-                "input_image": req.image,
-                "prompt_strength": 0.6,
-            },
+                "prompt": "man in a formal, high-quality black business suit, white shirt, black tie, sharp focus, professional headshot style",
+                "image": req.image,
+                "prompt_strength": 0.6
+            }
         )
+        # --------------------------------
 
         if isinstance(output, list) and len(output) > 0:
             return {"status": "success", "output_url": str(output[0])}
