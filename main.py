@@ -45,23 +45,20 @@ async def process_photo(req: PhotoRequest):
         image_bytes = base64.b64decode(raw_image_data)
         file_obj = io.BytesIO(image_bytes)
 
-        # 2. Загружаем исходник в официальное CDN-хранилище Replicate
-        uploaded_file = client.files.create(file_obj)
-
-        # 3. Промпт для генерации идеального бизнес-костюма
+        # 2. Промпт для генерации идеального бизнес-костюма
         prompt = (
             "A professional studio portrait of the person from the input image, "
             "wearing a modern, perfectly tailored dark navy blue business suit with a crisp white shirt and tie. "
             "Cinematic studio lighting, 8k resolution, highly detailed face, photo realistic, sharp focus."
         )
 
-        # 4. Запускаем проверенную генеративную модель FLUX-Dev Image-to-Image
+        # 3. Передаем байтовый объект прямо в FLUX (SDK сам его упакует)
         output = client.run(
             "black-forest-labs/flux-dev",
             input={
-                "image": uploaded_file,
+                "image": file_obj,
                 "prompt": prompt,
-                "prompt_strength": 0.65,  # 0.65 сохраняет черты лица и меняет одежду/фон
+                "prompt_strength": 0.65,
                 "num_inference_steps": 28,
                 "guidance_scale": 3.5,
                 "output_format": "jpg",
