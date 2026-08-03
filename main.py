@@ -1,9 +1,9 @@
 import base64
 import os
+import replicate
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import replicate
 
 app = FastAPI()
 
@@ -15,27 +15,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 class PhotoRequest(BaseModel):
     image: str
 
+
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "Backend is running!"}
+
+
 @app.post("/api/process-photo")
 async def process_photo(req: PhotoRequest):
-    if not REPLICATE_API_TOKEN:
-        raise HTTPException(status_code=500, detail="Replicate API Token not configured")
-
     try:
+        api_token = os.environ.get("REPLICATE_API_TOKEN")
+        if not api_token:
+            raise HTTPException(status_code=500, detail="Replicate token not set")
+
+        # Вызываем стабильную модель Replicate без устаревших хешей
         output = replicate.run(
-            "stability-ai/stable-diffusion-inpainting:c28b92a7ecd66ee4a1e94d1d45f63697f1708ed74615a91f37e41259e86e1088",
+            "stability-ai/sdxl",
             input={
-                "image": req.image,
-                "prompt": "a professional business suit, formal shirt and tie, passport photo style, white background, high quality",
-                "negative_prompt": "pajamas, casual clothes, distorted face, bad anatomy, dark background",
-                "num_inference_steps": 25
-            }
+                "prompt": "man in a sharp dark business suit, white shirt and tie, studio lighting, formal photo style, high resolution",
+                "input_image": req.image,
+                "prompt_strength": 0.6,
+            },
         )
-        return {"status": "success", "output_url": output[0]}
+
+        if isinstance(output, list) and len(output) > 0:
+            return {"status": "success", "output_url": str(output[0])}
+        elif isinstance(output, str):
+            return {"status": "success", "output_url": output}
+        else:
+            return {"status": "error", "error": "No image generated"}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
