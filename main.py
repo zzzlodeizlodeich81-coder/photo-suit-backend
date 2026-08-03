@@ -6,7 +6,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Разрешаем запросы с любого фронтенда (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,11 +31,14 @@ async def process_photo(req: PhotoRequest):
         if not api_token:
             raise HTTPException(status_code=500, detail="Replicate token not set")
 
-        # Используем официальную публичную модель Flux Schnell
-        output = replicate.run(
+        # Настраиваем клиент с увеличенным таймаутом (120 секунд)
+        client = replicate.Client(api_token=api_token, timeout=120.0)
+
+        # Вызываем молниеносную модель flux-schnell
+        output = client.run(
             "black-forest-labs/flux-schnell",
             input={
-                "prompt": "a professional headshot of a handsome man wearing a luxury black business suit, white shirt and tie, clean background, passport photo style, high details",
+                "prompt": "a professional headshot of a handsome man wearing a luxury dark business suit, white shirt and tie, clean background, passport photo style, high details",
                 "go_fast": True,
                 "megapixels": "1",
                 "num_outputs": 1,
@@ -46,7 +48,6 @@ async def process_photo(req: PhotoRequest):
             },
         )
 
-        # Replicate возвращает генератор/список файлов
         if output:
             results = list(output)
             if len(results) > 0:
