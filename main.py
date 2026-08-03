@@ -1,6 +1,8 @@
 import base64
+import json
 import os
-import requests
+import urllib.parse
+import urllib.request
 import replicate
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,34 +23,60 @@ class PhotoRequest(BaseModel):
     image: str
 
 
-# Картинка шаблона костюма
+# Шаблон костюма
 TARGET_SUIT_IMAGE = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1000&auto=format&fit=crop"
 
 
 def upload_base64_to_tmp(base64_str: str) -> str:
-    """Загружает base64 фото во временное хранилище и возвращает прямую ссылку URL."""
+    """Загружает base64 фото во временное хранилище через встроенные библиотеки Python."""
     if "," in base64_str:
         base64_str = base64_str.split(",")[1]
 
     image_bytes = base64.b64decode(base64_str)
 
-    # Загружаем на временный сервисный хостинг catbox
-    response = requests.post(
-        "https://catbox.moe/user/api.php",
-        data={"reqtype": "fileupload"},
-        files={"fileToUpload": ("face.jpg", image_bytes, "image/jpeg")},
-        timeout=15,
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    body = []
+
+    body.append(f"--{boundary}".encode())
+    body.append(
+        b'Content-Disposition: form-data; name="reqtype"\r\n\r\nfileupload'
     )
 
-    if response.status_code == 200 and response.text.startswith("http"):
-        return response.text.strip()
-    else:
-        raise Exception("Не удалось загрузить временное фото лица")
+    body.append(f"--{boundary}".encode())
+    body.append(
+        b'Content-Disposition: form-data; name="fileToUpload";'
+        b' filename="face.jpg"\r\nContent-Type: image/jpeg\r\n\r\n'
+    )
+    body.append(image_bytes)
+    body.append(b"\r\n")
+    body.append(f"--{boundary}--\r\n".encode())
+
+    payload = b"\r\n".join(
+        [
+            body[0],
+            body[1],
+            body[2],
+            body[3] + body[4] + body[5],
+            body[6],
+        ]
+    )
+
+    req = urllib.request.Request(
+        "https://catbox.moe/user/api.php",
+        data=payload,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+
+    with urllib.request.urlopen(req, timeout=15) as response:
+        res_text = response.read().decode("utf-8").strip()
+        if res_text.startswith("http"):
+            return res_text
+        raise Exception("Ошибка при загрузке фото во временное хранилище")
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "Face Swap Backend is Online"}
+    return {"status": "ok", "message": "Face Swap Backend is Ready!"}
 
 
 @app.post("/api/process-photo")
@@ -62,15 +90,15 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # 1. Получаем прямую URL-ссылку на фото лица
+        # 1. Получаем прямую URL-ссылку на загруженное фото
         user_image_url = upload_base64_to_tmp(req.image)
 
-        # 2. Вызываем проверенную модель codeplugtech/face-swap со 100% точными именами ключей
+        # 2. Передаем ссылки в Replicate
         output = client.run(
             "codeplugtech/face-swap:278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",
             input={
-                "input_image": TARGET_SUIT_IMAGE,  # Фоновый костюм
-                "swap_image": user_image_url,  # Лицо
+                "input_image": TARGET_SUIT_IMAGE,
+                "swap_image": user_image_url,
             },
         )
 
