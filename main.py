@@ -1,5 +1,3 @@
-import base64
-import io
 import os
 import replicate
 from fastapi import FastAPI, HTTPException
@@ -17,17 +15,18 @@ app.add_middleware(
 )
 
 
-class PhotoRequest(BaseModel):
-    image: str
+class ContentRequest(BaseModel):
+    prompt: str
+    mode: str = "photo"  # "photo" или "video"
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "FLUX Photo Suit Backend is Live"}
+    return {"status": "ok", "message": "AI Photo & Video Generator API"}
 
 
-@app.post("/api/process-photo")
-async def process_photo(req: PhotoRequest):
+@app.post("/api/generate")
+async def generate_content(req: ContentRequest):
     try:
         api_token = os.environ.get("REPLICATE_API_TOKEN")
         if not api_token:
@@ -35,36 +34,35 @@ async def process_photo(req: PhotoRequest):
                 status_code=500, detail="REPLICATE_API_TOKEN not set"
             )
 
-        client = replicate.Client(api_token=api_token, timeout=120.0)
+        client = replicate.Client(api_token=api_token, timeout=300.0)
 
-        # 1. Декодируем base64 во внутренний поток байтов
-        raw_image_data = req.image
-        if "," in raw_image_data:
-            raw_image_data = raw_image_data.split(",")[1]
+        # 1. Если запросили ФОТО
+        if req.mode == "photo":
+            output = client.run(
+                "black-forest-labs/flux-schnell",
+                input={
+                    "prompt": req.prompt,
+                    "aspect_ratio": "16:9",
+                    "output_format": "jpg",
+                },
+            )
 
-        image_bytes = base64.b64decode(raw_image_data)
-        file_obj = io.BytesIO(image_bytes)
+        # 2. Если запросили ВИДЕО
+        elif req.mode == "video":
+            output = client.run(
+                "minimax/video-01",
+                input={
+                    "prompt": req.prompt,
+                    "prompt_optimizer": True,
+                },
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid mode. Use 'photo' or 'video'.",
+            )
 
-        # 2. Промпт для генерации идеального бизнес-костюма
-        prompt = (
-            "A professional studio portrait of the person from the input image, "
-            "wearing a modern, perfectly tailored dark navy blue business suit with a crisp white shirt and tie. "
-            "Cinematic studio lighting, 8k resolution, highly detailed face, photo realistic, sharp focus."
-        )
-
-        # 3. Передаем байтовый объект прямо в FLUX (SDK сам его упакует)
-        output = client.run(
-            "black-forest-labs/flux-dev",
-            input={
-                "image": file_obj,
-                "prompt": prompt,
-                "prompt_strength": 0.65,
-                "num_inference_steps": 28,
-                "guidance_scale": 3.5,
-                "output_format": "jpg",
-            },
-        )
-
+        # Парсим ответ
         url = None
         if hasattr(output, "url"):
             url = str(output.url)
@@ -74,11 +72,15 @@ async def process_photo(req: PhotoRequest):
             url = output
 
         if url:
-            return {"status": "success", "output_url": url}
+            return {
+                "status": "success",
+                "mode": req.mode,
+                "output_url": url,
+            }
 
         return {
             "status": "error",
-            "error": f"Модель не вернула картинку: {output}",
+            "error": f"Модель не вернула результат: {output}",
         }
 
     except Exception as e:
