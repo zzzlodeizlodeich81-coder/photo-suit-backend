@@ -41,7 +41,7 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # Декодируем base64 в байтовый поток без сторонних сервисов
+        # Декодируем base64 в байты
         raw_image_data = req.image
         if "," in raw_image_data:
             raw_image_data = raw_image_data.split(",")[1]
@@ -49,12 +49,15 @@ async def process_photo(req: PhotoRequest):
         image_bytes = base64.b64decode(raw_image_data)
         file_obj = io.BytesIO(image_bytes)
 
-        # Передаем байтовый объект напрямую в Replicate SDK
+        # 1. Загружаем файл НАПРЯМУЮ в официальное хранилище Replicate
+        uploaded_file = client.files.create(file_obj)
+
+        # 2. Запускаем модель lucataco/modelscope-facefusion через официальную ссылку Replicate
         output = client.run(
-            "codeplugtech/face-swap:278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",
+            "lucataco/modelscope-facefusion:9a429854842207b4f3c163fac45732d841196929f214f440536c0a0cbe5c3459",
             input={
-                "input_image": TARGET_SUIT_IMAGE,
-                "swap_image": file_obj,
+                "template_image": TARGET_SUIT_IMAGE,
+                "user_image": uploaded_file.urls["get"],
             },
         )
 
