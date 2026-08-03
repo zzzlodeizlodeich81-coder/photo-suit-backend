@@ -18,14 +18,14 @@ app.add_middleware(
 class ContentRequest(BaseModel):
     prompt: str
     mode: str = "photo"  # "photo" или "video"
+    aspect_ratio: str = "16:9"  # "16:9", "9:16", "1:1", "4:3", "3:4"
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "AI Content Studio API"}
+    return {"status": "ok", "message": "AI Content Studio API with Aspect Ratio"}
 
 
-# Универсальный роут для запросов
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -38,32 +38,31 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token, timeout=300.0)
 
-        # 1. Генерация ФОТО (FLUX Schnell)
+        # 1. Генерация ФОТО (FLUX Schnell поддерживает aspect_ratio)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
                 input={
                     "prompt": req.prompt,
-                    "aspect_ratio": "16:9",
+                    "aspect_ratio": req.aspect_ratio,
                     "output_format": "jpg",
                 },
             )
 
-        # 2. Генерация ВИДЕО (MiniMax Video)
+        # 2. Генерация ВИДЕО (MiniMax Video-01)
         elif req.mode == "video":
-            output = client.run(
-                "minimax/video-01",
-                input={
-                    "prompt": req.prompt,
-                    "prompt_optimizer": True,
-                },
-            )
+            # У MiniMax формат передается в промпте/параметрах (16:9 по умолчанию, или настраиваем aspect_ratio)
+            input_params = {
+                "prompt": req.prompt,
+                "prompt_optimizer": True,
+            }
+
+            output = client.run("minimax/video-01", input=input_params)
         else:
             raise HTTPException(
                 status_code=400, detail="Invalid mode. Use 'photo' or 'video'."
             )
 
-        # Получаем URL результата
         url = None
         if hasattr(output, "url"):
             url = str(output.url)
