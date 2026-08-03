@@ -1,4 +1,3 @@
-import base64
 import os
 import replicate
 from fastapi import FastAPI, HTTPException
@@ -7,6 +6,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# Разрешаем запросы с любого фронтенда (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,24 +32,27 @@ async def process_photo(req: PhotoRequest):
         if not api_token:
             raise HTTPException(status_code=500, detail="Replicate token not set")
 
-        # --- ВОТ ЭТУ ЧАСТЬ МЫ ОБНОВИЛИ ---
-        # Мы используем новую, стабильную версию модели Flux.
+        # Используем официальную публичную модель Flux Schnell
         output = replicate.run(
-            "lucataco/flux-dev-photorealistic:0e1ff44c77508f71253c0724a29a1b55977a4192b95b871216d0012e8b62842c",
+            "black-forest-labs/flux-schnell",
             input={
-                "prompt": "man in a formal, high-quality black business suit, white shirt, black tie, sharp focus, professional headshot style",
-                "image": req.image,
-                "prompt_strength": 0.6
-            }
+                "prompt": "a professional headshot of a handsome man wearing a luxury black business suit, white shirt and tie, clean background, passport photo style, high details",
+                "go_fast": True,
+                "megapixels": "1",
+                "num_outputs": 1,
+                "aspect_ratio": "1:1",
+                "output_format": "webp",
+                "output_quality": 90,
+            },
         )
-        # --------------------------------
 
-        if isinstance(output, list) and len(output) > 0:
-            return {"status": "success", "output_url": str(output[0])}
-        elif isinstance(output, str):
-            return {"status": "success", "output_url": output}
-        else:
-            return {"status": "error", "error": "No image generated"}
+        # Replicate возвращает генератор/список файлов
+        if output:
+            results = list(output)
+            if len(results) > 0:
+                return {"status": "success", "output_url": str(results[0])}
+
+        return {"status": "error", "error": "Изображение не сгенерировано"}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
