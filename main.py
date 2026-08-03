@@ -21,12 +21,13 @@ class PhotoRequest(BaseModel):
     image: str
 
 
+# Фото отличного костюма для шаблона
 TARGET_SUIT_IMAGE = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1000&auto=format&fit=crop"
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "Face Swap Backend is Ready!"}
+    return {"status": "ok", "message": "Face Swap Backend"}
 
 
 @app.post("/api/process-photo")
@@ -38,19 +39,20 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # Обрабатываем изображение: отрезаем префикс base64 и преобразуем в файловый поток
+        # Конвертируем входной base64 в поток
         raw_image_data = req.image
         if "," in raw_image_data:
             raw_image_data = raw_image_data.split(",")[1]
 
         image_bytes = base64.b64decode(raw_image_data)
-        image_file = io.BytesIO(image_bytes)
+        user_image_file = io.BytesIO(image_bytes)
 
+        # Вызываем топовую модель easel/advanced-face-swap
         output = client.run(
-            "codeplugtech/face-swap:278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",
+            "easel/advanced-face-swap:95fa91eb008b8fbe7769efaa9c7c7fdd810cb955dfc0d640b388e2283cb0a544",
             input={
-                "input_image": TARGET_SUIT_IMAGE,
-                "swap_image": image_file,
+                "target_image": TARGET_SUIT_IMAGE,
+                "swap_image": user_image_file,
             },
         )
 
