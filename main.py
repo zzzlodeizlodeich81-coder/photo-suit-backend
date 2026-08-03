@@ -19,13 +19,13 @@ class PhotoRequest(BaseModel):
     image: str
 
 
-# Картинка-шаблон (костюм)
+# Фото отличного делового костюма на прозрачном/нейтральном фоне
 TARGET_SUIT_IMAGE = "https://images.unsplash.com/photo-1507679799987-c73779587ccf?q=80&w=1000&auto=format&fit=crop"
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "Face Swap Backend"}
+    return {"status": "ok", "message": "Face Swap Backend is Ready!"}
 
 
 @app.post("/api/process-photo")
@@ -37,19 +37,21 @@ async def process_photo(req: PhotoRequest):
 
         client = replicate.Client(api_token=api_token, timeout=120.0)
 
-        # Используем доступную модель Face Swap
+        # Вызываем строго проверенную модель со страницы Replicate
         output = client.run(
-            "subminds/face-swap:9e30a5822e1b19102c7102554746f36531be3ee037e909d94f29a03195f4c20f",
+            "codeplugtech/face-swap:278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",
             input={
-                "target_image": TARGET_SUIT_IMAGE,  # Шаблон в костюме
+                "input_image": TARGET_SUIT_IMAGE,  # Костюм
                 "swap_image": req.image,            # Твоё лицо
             },
         )
 
         if output:
-            return {"status": "success", "output_url": str(output)}
+            # Replicate возвращает объект FileOutput, берем его URL
+            output_url = str(output.url) if hasattr(output, "url") else str(output)
+            return {"status": "success", "output_url": output_url}
 
-        return {"status": "error", "error": "Не удалось пересадить лицо"}
+        return {"status": "error", "error": "Не удалось сгенерировать фото"}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
