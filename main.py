@@ -19,6 +19,7 @@ class ContentRequest(BaseModel):
     prompt: str
     mode: str = "photo"  # "photo" или "video"
     aspect_ratio: str = "16:9"
+    duration: int = 5  # Длительность видео: 5 или 10 секунд (по умолчанию 5)
 
 
 @app.get("/")
@@ -26,7 +27,7 @@ def home():
     return {"status": "ok", "message": "AI Content Studio API"}
 
 
-# 1. Запуск генерации (Фото через Flux, Видео через Runway Gen-3)
+# 1. Запуск генерации
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -39,7 +40,7 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token)
 
-        # РЕЖИМ 1: ФОТО (Flux Schnell — держим отличное качество за $0.003)
+        # РЕЖИМ 1: ФОТО (Flux Schnell)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -52,20 +53,23 @@ async def generate_content(req: ContentRequest):
             url = output[0] if isinstance(output, list) else str(output)
             return {"status": "success", "mode": "photo", "output_url": url}
 
-        # РЕЖИМ 2: ВИДЕО (Runway Gen-3 Alpha)
+        # РЕЖИМ 2: ВИДЕО (Runway Gen-4 Turbo)
         elif req.mode == "video":
-            video_prompt = req.prompt
-            if req.aspect_ratio == "9:16":
-                video_prompt += ", vertical 9:16 portrait framing"
-            elif req.aspect_ratio == "16:9":
-                video_prompt += ", horizontal 16:9 widescreen"
+            # Валидация соотношения сторон
+            valid_ratios = ["16:9", "9:16", "1:1", "3:4", "4:3", "21:9"]
+            target_ratio = (
+                req.aspect_ratio if req.aspect_ratio in valid_ratios else "16:9"
+            )
 
-            # Запуск Runway Gen-3 Alpha
+            # Ограничиваем duration только допустимыми значениями (5 или 10)
+            video_duration = 10 if req.duration == 10 else 5
+
             prediction = client.predictions.create(
-                version="runwayml/gen3-alpha",
+                model="runwayml/gen4-turbo",
                 input={
-                    "prompt": video_prompt,
-                    "duration": 5,  # 5-секундный ролик
+                    "prompt": req.prompt,
+                    "aspect_ratio": target_ratio,
+                    "duration": video_duration,
                 },
             )
 
@@ -79,7 +83,7 @@ async def generate_content(req: ContentRequest):
         return {"status": "error", "error": str(e)}
 
 
-# 2. Эндпоинт проверки статуса генерации видео (Polling)
+# 2. Опрос статуса генерации видео (Polling)
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
