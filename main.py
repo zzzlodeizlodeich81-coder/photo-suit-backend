@@ -1,11 +1,13 @@
 import os
 import replicate
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
+# 1. Железобетонный CORS для работы с GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,24 +21,36 @@ class ContentRequest(BaseModel):
     prompt: str
     mode: str = "photo"  # "photo" или "video"
     aspect_ratio: str = "16:9"
-    duration: int = 5  # Длительность видео: 5 или 10 секунд (по умолчанию 5)
+    duration: int = 5
 
 
+# Обработчик корневого урла
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "AI Content Studio API"}
+    return {"status": "ok", "message": "AI Content Studio API is running"}
 
 
-# 1. Запуск генерации
+# Глобальный обработчик ошибок, чтобы CORS не отваливался при ошибках 500/404
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=200,
+        content={"status": "error", "error": str(exc)},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+# Основной эндпоинт генерации
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
     try:
         api_token = os.environ.get("REPLICATE_API_TOKEN")
         if not api_token:
-            raise HTTPException(
-                status_code=500, detail="REPLICATE_API_TOKEN not set"
-            )
+            return {
+                "status": "error",
+                "error": "REPLICATE_API_TOKEN environment variable is missing on Render",
+            }
 
         client = replicate.Client(api_token=api_token)
 
@@ -55,13 +69,10 @@ async def generate_content(req: ContentRequest):
 
         # РЕЖИМ 2: ВИДЕО (Runway Gen-4 Turbo)
         elif req.mode == "video":
-            # Валидация соотношения сторон
             valid_ratios = ["16:9", "9:16", "1:1", "3:4", "4:3", "21:9"]
             target_ratio = (
                 req.aspect_ratio if req.aspect_ratio in valid_ratios else "16:9"
             )
-
-            # Ограничиваем duration только допустимыми значениями (5 или 10)
             video_duration = 10 if req.duration == 10 else 5
 
             prediction = client.predictions.create(
@@ -83,7 +94,7 @@ async def generate_content(req: ContentRequest):
         return {"status": "error", "error": str(e)}
 
 
-# 2. Опрос статуса генерации видео (Polling)
+# 2. Опрос статуса видео (Polling)
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
