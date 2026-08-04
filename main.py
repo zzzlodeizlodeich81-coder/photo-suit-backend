@@ -26,7 +26,7 @@ def home():
     return {"status": "ok", "message": "AI Content Studio API"}
 
 
-# 1. Запуск генерации
+# 1. Запуск генерации (Фото через Flux, Видео через Runway Gen-3)
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -39,7 +39,7 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token)
 
-        # РЕЖИМ 1: ФОТО (Flux Schnell — поддерживает 16:9, 9:16, 1:1, 3:4, 4:3 и т.д.)
+        # РЕЖИМ 1: ФОТО (Flux Schnell — держим отличное качество за $0.003)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -52,25 +52,20 @@ async def generate_content(req: ContentRequest):
             url = output[0] if isinstance(output, list) else str(output)
             return {"status": "success", "mode": "photo", "output_url": url}
 
-        # РЕЖИМ 2: ВИДЕО (Запуск модели Luma Ray)
+        # РЕЖИМ 2: ВИДЕО (Runway Gen-3 Alpha)
         elif req.mode == "video":
-            # Настройка фрейминга для видео
             video_prompt = req.prompt
             if req.aspect_ratio == "9:16":
-                video_prompt += (
-                    ", vertical 9:16 portrait orientation, vertical composition"
-                )
+                video_prompt += ", vertical 9:16 portrait framing"
             elif req.aspect_ratio == "16:9":
-                video_prompt += ", horizontal 16:9 widescreen orientation"
-            elif req.aspect_ratio == "1:1":
-                video_prompt += ", square 1:1 format"
+                video_prompt += ", horizontal 16:9 widescreen"
 
-            # Запускаем через predictions.create с использованием правильной модели
+            # Запуск Runway Gen-3 Alpha
             prediction = client.predictions.create(
-                model="luma/ray",
+                version="runwayml/gen3-alpha",
                 input={
                     "prompt": video_prompt,
-                    "aspect_ratio": req.aspect_ratio,
+                    "duration": 5,  # 5-секундный ролик
                 },
             )
 
@@ -81,31 +76,10 @@ async def generate_content(req: ContentRequest):
             }
 
     except Exception as e:
-        # Если модель luma/ray требует прямую ссылку или версию, делаем фоллбек
-        try:
-            if req.mode == "video":
-                # Резервный запуск luma/ray через стандартную модель
-                model_obj = client.models.get("luma/ray")
-                version = model_obj.latest_version
-                prediction = client.predictions.create(
-                    version=version.id,
-                    input={
-                        "prompt": req.prompt,
-                        "aspect_ratio": req.aspect_ratio,
-                    },
-                )
-                return {
-                    "status": "processing",
-                    "mode": "video",
-                    "prediction_id": prediction.id,
-                }
-        except Exception as fallback_err:
-            return {"status": "error", "error": str(fallback_err)}
-
         return {"status": "error", "error": str(e)}
 
 
-# 2. Эндпоинт проверки статуса видео
+# 2. Эндпоинт проверки статуса генерации видео (Polling)
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
