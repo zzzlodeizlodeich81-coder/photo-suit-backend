@@ -1,13 +1,12 @@
 import os
 import replicate
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
-# 1. Железобетонный CORS для работы с GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,13 +23,11 @@ class ContentRequest(BaseModel):
     duration: int = 5
 
 
-# Обработчик корневого урла
 @app.get("/")
 def home():
     return {"status": "ok", "message": "AI Content Studio API is running"}
 
 
-# Глобальный обработчик ошибок, чтобы CORS не отваливался при ошибках 500/404
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -40,7 +37,6 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Основной эндпоинт генерации
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -49,12 +45,14 @@ async def generate_content(req: ContentRequest):
         if not api_token:
             return {
                 "status": "error",
-                "error": "REPLICATE_API_TOKEN environment variable is missing on Render",
+                "error": "REPLICATE_API_TOKEN environment variable is missing",
             }
 
         client = replicate.Client(api_token=api_token)
 
-        # РЕЖИМ 1: ФОТО (Flux Schnell)
+        # -------------------------------------------------------------
+        # 1. РЕЖИМ ФОТО: Flux Schnell
+        # -------------------------------------------------------------
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -64,23 +62,29 @@ async def generate_content(req: ContentRequest):
                     "output_format": "jpg",
                 },
             )
-            url = output[0] if isinstance(output, list) else str(output)
-            return {"status": "success", "mode": "photo", "output_url": url}
 
-        # РЕЖИМ 2: ВИДЕО (Runway Gen-4 Turbo)
+            # Вытаскиваем URL из результата
+            if isinstance(output, list) and len(output) > 0:
+                item = output[0]
+                url_str = getattr(item, "url", str(item))
+            else:
+                url_str = getattr(output, "url", str(output))
+
+            return {"status": "success", "mode": "photo", "output_url": str(url_str)}
+
+        # -------------------------------------------------------------
+        # 2. РЕЖИМ ВИДЕО: xAI Grok Imagine Video
+        # -------------------------------------------------------------
         elif req.mode == "video":
-            valid_ratios = ["16:9", "9:16", "1:1", "3:4", "4:3", "21:9"]
-            target_ratio = (
-                req.aspect_ratio if req.aspect_ratio in valid_ratios else "16:9"
-            )
-            video_duration = 10 if req.duration == 10 else 5
+            video_duration = req.duration if 1 <= req.duration <= 15 else 5
 
+            # Создаем асинхронный prediction для фоновой генерации
             prediction = client.predictions.create(
-                model="runwayml/gen4-turbo",
+                model="xai/grok-imagine-video",
                 input={
                     "prompt": req.prompt,
-                    "aspect_ratio": target_ratio,
-                    "duration": video_duration,
+                    "aspect_ratio": req.aspect_ratio,
+                    "duration": int(video_duration),
                 },
             )
 
@@ -94,7 +98,6 @@ async def generate_content(req: ContentRequest):
         return {"status": "error", "error": str(e)}
 
 
-# 2. Опрос статуса видео (Polling)
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
@@ -105,8 +108,17 @@ async def check_status(prediction_id: str):
 
         if prediction.status == "succeeded":
             output = prediction.output
-            url = output if isinstance(output, str) else output[0]
-            return {"status": "success", "output_url": url}
+
+            if isinstance(output, list) and len(output) > 0:
+                res_item = output[0]
+            else:
+                res_item = output
+
+            # Читаем .url согласно документации Replicate
+            final_url = getattr(res_item, "url", str(res_item))
+
+            return {"status": "success", "output_url": str(final_url)}
+
         elif prediction.status == "failed":
             return {
                 "status": "error",
