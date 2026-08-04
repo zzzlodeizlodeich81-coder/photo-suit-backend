@@ -18,14 +18,15 @@ app.add_middleware(
 class ContentRequest(BaseModel):
     prompt: str
     mode: str = "photo"  # "photo" или "video"
-    aspect_ratio: str = "16:9"  # "16:9", "9:16", "1:1", "4:3", "3:4"
+    aspect_ratio: str = "16:9"
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "AI Content Studio API with Aspect Ratio"}
+    return {"status": "ok", "message": "AI Content Studio API"}
 
 
+# 1. Запуск генерации (Синхронно для Фото, Асинхронно для Видео)
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -38,7 +39,7 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token, timeout=300.0)
 
-        # 1. Генерация ФОТО (FLUX Schnell поддерживает aspect_ratio)
+        # РЕЖИМ 1: ФОТО (Flux Schnell - готовится за 3-5 секунд)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -48,36 +49,50 @@ async def generate_content(req: ContentRequest):
                     "output_format": "jpg",
                 },
             )
+            url = output[0] if isinstance(output, list) else str(output)
+            return {"status": "success", "mode": "photo", "output_url": url}
 
-        # 2. Генерация ВИДЕО (MiniMax Video-01)
+        # РЕЖИМ 2: ВИДЕО (Запускаем через Predictions API, чтобы не ловить таймауты)
         elif req.mode == "video":
-            # У MiniMax формат передается в промпте/параметрах (16:9 по умолчанию, или настраиваем aspect_ratio)
-            input_params = {
-                "prompt": req.prompt,
-                "prompt_optimizer": True,
+            # Используем быструю и стабильную модель Luma Ray
+            prediction = client.predictions.create(
+                version="luma/ray",
+                input={
+                    "prompt": req.prompt,
+                    "aspect_ratio": req.aspect_ratio,
+                },
+            )
+            # Возвращаем ID задачи фронтенду моментально!
+            return {
+                "status": "processing",
+                "mode": "video",
+                "prediction_id": prediction.id,
             }
 
-            output = client.run("minimax/video-01", input=input_params)
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# 2. Эндпоинт проверки статуса видео по ID
+@app.get("/api/status/{prediction_id}")
+async def check_status(prediction_id: str):
+    try:
+        api_token = os.environ.get("REPLICATE_API_TOKEN")
+        client = replicate.Client(api_token=api_token)
+
+        prediction = client.predictions.get(prediction_id)
+
+        if prediction.status == "succeeded":
+            output = prediction.output
+            url = output if isinstance(output, str) else output[0]
+            return {"status": "success", "output_url": url}
+        elif prediction.status == "failed":
+            return {
+                "status": "error",
+                "error": prediction.error or "Генерация отменена или завершилась ошибкой",
+            }
         else:
-            raise HTTPException(
-                status_code=400, detail="Invalid mode. Use 'photo' or 'video'."
-            )
-
-        url = None
-        if hasattr(output, "url"):
-            url = str(output.url)
-        elif isinstance(output, list) and len(output) > 0:
-            url = str(output[0])
-        elif isinstance(output, str):
-            url = output
-
-        if url:
-            return {"status": "success", "mode": req.mode, "output_url": url}
-
-        return {
-            "status": "error",
-            "error": f"Модель не вернула URL: {output}",
-        }
+            return {"status": "processing", "progress": prediction.status}
 
     except Exception as e:
         return {"status": "error", "error": str(e)}
