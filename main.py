@@ -26,7 +26,7 @@ def home():
     return {"status": "ok", "message": "AI Content Studio API"}
 
 
-# 1. Запуск генерации (Синхронно для Фото, Асинхронно для Видео)
+# 1. Запуск генерации
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
@@ -37,9 +37,9 @@ async def generate_content(req: ContentRequest):
                 status_code=500, detail="REPLICATE_API_TOKEN not set"
             )
 
-        client = replicate.Client(api_token=api_token, timeout=300.0)
+        client = replicate.Client(api_token=api_token)
 
-        # РЕЖИМ 1: ФОТО (Flux Schnell - готовится за 3-5 секунд)
+        # РЕЖИМ 1: ФОТО (Flux Schnell - оставили как есть, так как качество идеальное!)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -52,17 +52,29 @@ async def generate_content(req: ContentRequest):
             url = output[0] if isinstance(output, list) else str(output)
             return {"status": "success", "mode": "photo", "output_url": url}
 
-        # РЕЖИМ 2: ВИДЕО (Запускаем через Predictions API, чтобы не ловить таймауты)
+        # РЕЖИМ 2: ВИДЕО (Luma Ray с выбором формата кадра)
         elif req.mode == "video":
-            # Используем быструю и стабильную модель Luma Ray
+            # Формируем промпт с явным указанием ориентации кадра
+            video_prompt = req.prompt
+            if req.aspect_ratio == "9:16":
+                video_prompt += ", vertical video shot 9:16 framing, portrait mode"
+            elif req.aspect_ratio == "16:9":
+                video_prompt += (
+                    ", horizontal widescreen 16:9 video shot, cinematic"
+                )
+            elif req.aspect_ratio == "1:1":
+                video_prompt += ", square 1:1 video shot"
+
+            # Запускаем через predictions.create для luma/ray
             prediction = client.predictions.create(
-                version="luma/ray",
+                model="luma/ray",
                 input={
-                    "prompt": req.prompt,
+                    "prompt": video_prompt,
                     "aspect_ratio": req.aspect_ratio,
                 },
             )
-            # Возвращаем ID задачи фронтенду моментально!
+
+            # Возвращаем ID задачи фронтенду моментально
             return {
                 "status": "processing",
                 "mode": "video",
@@ -73,7 +85,7 @@ async def generate_content(req: ContentRequest):
         return {"status": "error", "error": str(e)}
 
 
-# 2. Эндпоинт проверки статуса видео по ID
+# 2. Проверка статуса генерации видео по ID
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
@@ -89,7 +101,8 @@ async def check_status(prediction_id: str):
         elif prediction.status == "failed":
             return {
                 "status": "error",
-                "error": prediction.error or "Генерация отменена или завершилась ошибкой",
+                "error": prediction.error
+                or "Генерация отменена или завершилась ошибкой",
             }
         else:
             return {"status": "processing", "progress": prediction.status}
