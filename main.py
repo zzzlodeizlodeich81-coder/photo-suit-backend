@@ -1,6 +1,6 @@
 import os
 import replicate
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -37,6 +37,66 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"status": "error", "error": str(exc)},
         headers={"Access-Control-Allow-Origin": "*"},
     )
+
+
+# -------------------------------------------------------------
+# ОБРАБОТЧИК ПЛАТЕЖЕЙ ВКОНТАКТЕ (WEBHOOK)
+# -------------------------------------------------------------
+@app.post("/api/vk-payment")
+async def vk_payment(request: Request):
+    try:
+        # ВКонтакте отправляет данные в формате x-www-form-urlencoded
+        content_type = request.headers.get("content-type", "")
+        if "application/x-www-form-urlencoded" in content_type:
+            data = await request.form()
+        else:
+            data = await request.json()
+
+        notification_type = data.get("notification_type")
+
+        # 1. Запрос информации о товаре (при инициализации оплаты или тесте VK)
+        if notification_type in ["get_item", "get_item_test"]:
+            item = data.get("item")
+            
+            # Логика цен и названий (настраивается под ваши товары)
+            items_db = {
+                "photo_1": {"title": "1 генерация фото", "price": 1},
+                "video_1": {"title": "1 генерация видео", "price": 5},
+                "pack_10_5": {"title": "Пакет: 10 фото + 5 видео", "price": 20}
+            }
+            
+            item_info = items_db.get(item, {"title": "Генерация контента", "price": 1})
+
+            return {
+                "response": {
+                    "item_id": item,
+                    "title": item_info["title"],
+                    "price": item_info["price"]
+                }
+            }
+
+        # 2. Изменение статуса заказа (успешная оплата)
+        elif notification_type in ["order_status_change", "order_status_change_test"]:
+            status = data.get("status")
+            if status == "chargeable":
+                order_id = data.get("order_id")
+                user_id = data.get("user_id")
+                item = data.get("item")
+
+                # ЗДЕСЬ ДОБАВЛЯЕТСЯ ЛОГИКА НАЧИСЛЕНИЯ БАЛАНСА В БАЗУ ДАННЫХ
+                # print(f"Пользователь {user_id} успешно купил {item}")
+
+                return {
+                    "response": {
+                        "order_id": int(order_id),
+                        "app_order_id": int(order_id)
+                    }
+                }
+
+        return {"error": {"error_code": 100, "error_msg": "Неизвестный тип уведомления"}}
+
+    except Exception as e:
+        return {"error": {"error_code": 10, "error_msg": str(e)}}
 
 
 @app.post("/api/generate")
