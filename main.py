@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Хранилище балансов пользователей в ГОЛОСАХ VK: { "vk_user_id": balance_in_votes }
+# Хранилище балансов пользователей в КАДРАХ: { "vk_user_id": balance_in_frames }
 USER_BALANCES = {}
 
 
@@ -34,18 +34,18 @@ class AdRewardRequest(BaseModel):
     user_id: str
 
 
-# Расчет стоимости в ГОЛОСАХ исходя из цен Replicate ($0.06 за фото, $0.05/сек за видео)
-def get_cost(mode: str, duration: int) -> float:
+# Расчет стоимости в КАДРАХ (40 кадров = 2 голоса = ~10 руб)
+def get_cost(mode: str, duration: int) -> int:
     if mode == "photo":
-        return 2.0  # 2 голоса
+        return 40  # 40 кадров
     elif mode == "video":
         if duration <= 5:
-            return 6.0   # 6 голосов за 5 сек
+            return 120   # 120 кадров (6 голосов)
         elif duration <= 10:
-            return 11.0  # 11 голосов за 10 сек
+            return 220  # 220 кадров (11 голосов)
         else:
-            return 16.0  # 16 голосов за 15 сек
-    return 2.0
+            return 320  # 320 кадров (16 голосов)
+    return 40
 
 
 @app.get("/")
@@ -54,30 +54,29 @@ def home():
 
 
 # -------------------------------------------------------------
-# ЭНДПОИНТ: Проверка баланса пользователя
+# ЭНДПОИНТ: Проверка баланса пользователя (в кадрах)
 # -------------------------------------------------------------
 @app.get("/api/balance/{user_id}")
 async def get_user_balance(user_id: str):
-    balance = USER_BALANCES.get(str(user_id), 0.0)
-    # Округляем до 2 знаков для красивого отображения
-    return {"status": "success", "balance": round(balance, 2)}
+    balance = USER_BALANCES.get(str(user_id), 0)
+    return {"status": "success", "balance": int(balance)}
 
 
 # -------------------------------------------------------------
-# ЭНДПОИНТ: Начисление вознаграждения за просмотр рекламы (+0.25 голоса)
+# ЭНДПОИНТ: Начисление за просмотр рекламы (+5 кадров)
 # -------------------------------------------------------------
 @app.post("/api/add-reward-ad")
 async def add_reward_ad(req: AdRewardRequest):
     try:
         user_id = str(req.user_id)
-        current_balance = USER_BALANCES.get(user_id, 0.0)
+        current_balance = USER_BALANCES.get(user_id, 0)
         
-        # Начисляем 0.25 голоса за 1 просмотр ролика
-        USER_BALANCES[user_id] = current_balance + 0.25
+        # +5 кадров за ролик (8 роликов = 40 кадров = 1 фото)
+        USER_BALANCES[user_id] = current_balance + 5
         
         return {
             "status": "success", 
-            "new_balance": round(USER_BALANCES[user_id], 2)
+            "new_balance": USER_BALANCES[user_id]
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -92,7 +91,6 @@ async def vk_payment(request: Request):
         raw_body = await request.body()
         body_str = raw_body.decode("utf-8")
         
-        # Безопасно разбираем параметры от VK (x-www-form-urlencoded)
         parsed_data = parse_qs(body_str)
         data = {k: v[0] for k, v in parsed_data.items()}
 
@@ -104,27 +102,26 @@ async def vk_payment(request: Request):
 
         notification_type = data.get("notification_type")
 
-        # 1. VK запрашивает информацию о товаре перед покупкой (get_item / get_item_test)
+        # 1. Запрос информации о товаре перед покупкой
         if notification_type in ["get_item", "get_item_test"]:
             item = str(data.get("item", ""))
 
-            # Кастомные наборы голосов (пакеты пополнения)
+            # Тарифные пакеты в Кадрах
             items_db = {
-                "votes_2": {"title": "2 голоса (1 фото)", "price": 2},
-                "votes_6": {"title": "6 голосов (видео 5 сек)", "price": 6},
-                "votes_11": {"title": "11 голосов (видео 10 сек)", "price": 11},
-                "votes_16": {"title": "16 голосов (видео 15 сек)", "price": 16},
-                "votes_30": {"title": "Пакет 30 голосов (со скидкой)", "price": 30},
+                "votes_2": {"title": "40 кадров (1 фото)", "price": 2, "frames": 40},
+                "votes_6": {"title": "120 кадров (видео 5 сек)", "price": 6, "frames": 120},
+                "votes_11": {"title": "220 кадров (видео 10 сек)", "price": 11, "frames": 220},
+                "votes_16": {"title": "320 кадров (видео 15 сек)", "price": 16, "frames": 320},
+                "votes_30": {"title": "600 кадров (Выгодно!)", "price": 30, "frames": 600},
             }
             
-            # Фоллбэк: если товар не найден в словаре
             item_info = items_db.get(item)
             if not item_info:
                 try:
                     parsed_price = int(item.replace("votes_", ""))
-                    item_info = {"title": f"{parsed_price} голосов", "price": parsed_price}
+                    item_info = {"title": f"{parsed_price * 20} кадров", "price": parsed_price}
                 except Exception:
-                    item_info = {"title": "Пополнение баланса", "price": 2}
+                    item_info = {"title": "Пополнение баланса (40 кадров)", "price": 2}
 
             return JSONResponse(
                 content={
@@ -137,7 +134,7 @@ async def vk_payment(request: Request):
                 status_code=200,
             )
 
-        # 2. Успешная оплата — зачисляем купленные голоса
+        # 2. Успешная оплата — зачисляем Кадры
         elif notification_type in ["order_status_change", "order_status_change_test"]:
             status = data.get("status")
             if status == "chargeable":
@@ -145,13 +142,17 @@ async def vk_payment(request: Request):
                 user_id = str(data.get("user_id"))
                 item = str(data.get("item", ""))
 
-                votes_to_add = 2.0
-                try:
-                    votes_to_add = float(item.replace("votes_", ""))
-                except Exception:
-                    votes_to_add = 2.0
+                # Конвертируем купленный пакет в Кадры
+                frames_map = {
+                    "votes_2": 40,
+                    "votes_6": 120,
+                    "votes_11": 220,
+                    "votes_16": 320,
+                    "votes_30": 600,
+                }
+                frames_to_add = frames_map.get(item, 40)
 
-                USER_BALANCES[user_id] = USER_BALANCES.get(user_id, 0.0) + votes_to_add
+                USER_BALANCES[user_id] = USER_BALANCES.get(user_id, 0) + frames_to_add
 
                 return JSONResponse(
                     content={
@@ -176,21 +177,20 @@ async def vk_payment(request: Request):
 
 
 # -------------------------------------------------------------
-# ЭНДПОИНТ ГЕНЕРАЦИИ (С ПРОВЕРКОЙ И СПИСАНИЕМ БАЛАНСА)
+# ЭНДПОИНТ ГЕНЕРАЦИИ (С СПИСАНИЕМ КАДРОВ)
 # -------------------------------------------------------------
 @app.post("/api/generate")
 @app.post("/api/process-photo")
 async def generate_content(req: ContentRequest):
     try:
         user_id = str(req.user_id)
-        current_balance = USER_BALANCES.get(user_id, 0.0)
+        current_balance = USER_BALANCES.get(user_id, 0)
         required_cost = get_cost(req.mode, req.duration)
 
-        # БЛОКИРОВКА ГЕНЕРАЦИИ ПРИ НЕДОСТАТКЕ СРЕДСТВ
         if current_balance < required_cost:
             return {
                 "status": "error",
-                "error": f"Недостаточно голосов! Требуется {required_cost} голосов, а у вас на балансе {round(current_balance, 2)}.",
+                "error": f"Недостаточно кадров! Требуется {required_cost} кадров, а у вас на балансе {current_balance}.",
             }
 
         api_token = os.environ.get("REPLICATE_API_TOKEN")
@@ -210,7 +210,7 @@ async def generate_content(req: ContentRequest):
 
             output = client.run("xai/grok-imagine-image", input=input_params)
 
-            # Списываем голоса после запуска
+            # Списываем кадры
             USER_BALANCES[user_id] -= required_cost
 
             if isinstance(output, list) and len(output) > 0:
@@ -223,7 +223,7 @@ async def generate_content(req: ContentRequest):
                 "status": "success",
                 "mode": "photo",
                 "output_url": str(url_str),
-                "remaining_balance": round(USER_BALANCES[user_id], 2),
+                "remaining_balance": USER_BALANCES[user_id],
             }
 
         # 2. РЕЖИМ ВИДЕО: xAI Grok Imagine Video
@@ -243,14 +243,14 @@ async def generate_content(req: ContentRequest):
                 input=input_params,
             )
 
-            # Списываем голоса после запуска
+            # Списываем кадры
             USER_BALANCES[user_id] -= required_cost
 
             return {
                 "status": "processing",
                 "mode": "video",
                 "prediction_id": prediction.id,
-                "remaining_balance": round(USER_BALANCES[user_id], 2),
+                "remaining_balance": USER_BALANCES[user_id],
             }
 
     except Exception as e:
