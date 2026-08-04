@@ -39,7 +39,7 @@ async def generate_content(req: ContentRequest):
 
         client = replicate.Client(api_token=api_token)
 
-        # РЕЖИМ 1: ФОТО (Flux Schnell - оставили как есть, так как качество идеальное!)
+        # РЕЖИМ 1: ФОТО (Flux Schnell — поддерживает 16:9, 9:16, 1:1, 3:4, 4:3 и т.д.)
         if req.mode == "photo":
             output = client.run(
                 "black-forest-labs/flux-schnell",
@@ -52,20 +52,20 @@ async def generate_content(req: ContentRequest):
             url = output[0] if isinstance(output, list) else str(output)
             return {"status": "success", "mode": "photo", "output_url": url}
 
-        # РЕЖИМ 2: ВИДЕО (Luma Ray с выбором формата кадра)
+        # РЕЖИМ 2: ВИДЕО (Запуск модели Luma Ray)
         elif req.mode == "video":
-            # Формируем промпт с явным указанием ориентации кадра
+            # Настройка фрейминга для видео
             video_prompt = req.prompt
             if req.aspect_ratio == "9:16":
-                video_prompt += ", vertical video shot 9:16 framing, portrait mode"
-            elif req.aspect_ratio == "16:9":
                 video_prompt += (
-                    ", horizontal widescreen 16:9 video shot, cinematic"
+                    ", vertical 9:16 portrait orientation, vertical composition"
                 )
+            elif req.aspect_ratio == "16:9":
+                video_prompt += ", horizontal 16:9 widescreen orientation"
             elif req.aspect_ratio == "1:1":
-                video_prompt += ", square 1:1 video shot"
+                video_prompt += ", square 1:1 format"
 
-            # Запускаем через predictions.create для luma/ray
+            # Запускаем через predictions.create с использованием правильной модели
             prediction = client.predictions.create(
                 model="luma/ray",
                 input={
@@ -74,7 +74,6 @@ async def generate_content(req: ContentRequest):
                 },
             )
 
-            # Возвращаем ID задачи фронтенду моментально
             return {
                 "status": "processing",
                 "mode": "video",
@@ -82,10 +81,31 @@ async def generate_content(req: ContentRequest):
             }
 
     except Exception as e:
+        # Если модель luma/ray требует прямую ссылку или версию, делаем фоллбек
+        try:
+            if req.mode == "video":
+                # Резервный запуск luma/ray через стандартную модель
+                model_obj = client.models.get("luma/ray")
+                version = model_obj.latest_version
+                prediction = client.predictions.create(
+                    version=version.id,
+                    input={
+                        "prompt": req.prompt,
+                        "aspect_ratio": req.aspect_ratio,
+                    },
+                )
+                return {
+                    "status": "processing",
+                    "mode": "video",
+                    "prediction_id": prediction.id,
+                }
+        except Exception as fallback_err:
+            return {"status": "error", "error": str(fallback_err)}
+
         return {"status": "error", "error": str(e)}
 
 
-# 2. Проверка статуса генерации видео по ID
+# 2. Эндпоинт проверки статуса видео
 @app.get("/api/status/{prediction_id}")
 async def check_status(prediction_id: str):
     try:
@@ -101,8 +121,7 @@ async def check_status(prediction_id: str):
         elif prediction.status == "failed":
             return {
                 "status": "error",
-                "error": prediction.error
-                or "Генерация отменена или завершилась ошибкой",
+                "error": prediction.error or "Ошибка генерации видео",
             }
         else:
             return {"status": "processing", "progress": prediction.status}
