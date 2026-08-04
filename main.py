@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from typing import Optional
 
 app = FastAPI()
 
@@ -17,15 +18,16 @@ app.add_middleware(
 
 
 class ContentRequest(BaseModel):
-    prompt: str
+    prompt: Optional[str] = ""
     mode: str = "photo"  # "photo" или "video"
-    aspect_ratio: str = "16:9"
-    duration: int = 5
+    aspect_ratio: str = "9:16"
+    duration: int = 15
+    image: Optional[str] = None  # Base64 или URL картинки для Image-to-Image / Image-to-Video
 
 
 @app.get("/")
 def home():
-    return {"status": "ok", "message": "AI Content Studio API is running"}
+    return {"status": "ok", "message": "AI Content Studio API (Grok Suite) is running"}
 
 
 @app.exception_handler(Exception)
@@ -51,19 +53,21 @@ async def generate_content(req: ContentRequest):
         client = replicate.Client(api_token=api_token)
 
         # -------------------------------------------------------------
-        # 1. РЕЖИМ ФОТО: Flux Schnell
+        # 1. РЕЖИМ ФОТО: xAI Grok Imagine Image
         # -------------------------------------------------------------
         if req.mode == "photo":
+            input_params = {
+                "prompt": req.prompt or "high quality image",
+                "aspect_ratio": req.aspect_ratio,
+            }
+            if req.image:
+                input_params["image"] = req.image
+
             output = client.run(
-                "black-forest-labs/flux-schnell",
-                input={
-                    "prompt": req.prompt,
-                    "aspect_ratio": req.aspect_ratio,
-                    "output_format": "jpg",
-                },
+                "xai/grok-imagine-image",
+                input=input_params,
             )
 
-            # Вытаскиваем URL из результата
             if isinstance(output, list) and len(output) > 0:
                 item = output[0]
                 url_str = getattr(item, "url", str(item))
@@ -73,19 +77,22 @@ async def generate_content(req: ContentRequest):
             return {"status": "success", "mode": "photo", "output_url": str(url_str)}
 
         # -------------------------------------------------------------
-        # 2. РЕЖИМ ВИДЕО: xAI Grok Imagine Video
+        # 2. РЕЖИМ ВИДЕО: xAI Grok Imagine Video (поддержка до 15 сек)
         # -------------------------------------------------------------
         elif req.mode == "video":
-            video_duration = req.duration if 1 <= req.duration <= 15 else 5
+            video_duration = req.duration if 1 <= req.duration <= 15 else 15
 
-            # Создаем асинхронный prediction для фоновой генерации
+            input_params = {
+                "prompt": req.prompt or "cinematic motion",
+                "aspect_ratio": req.aspect_ratio,
+                "duration": int(video_duration),
+            }
+            if req.image:
+                input_params["image"] = req.image
+
             prediction = client.predictions.create(
                 model="xai/grok-imagine-video",
-                input={
-                    "prompt": req.prompt,
-                    "aspect_ratio": req.aspect_ratio,
-                    "duration": int(video_duration),
-                },
+                input=input_params,
             )
 
             return {
@@ -114,7 +121,6 @@ async def check_status(prediction_id: str):
             else:
                 res_item = output
 
-            # Читаем .url согласно документации Replicate
             final_url = getattr(res_item, "url", str(res_item))
 
             return {"status": "success", "output_url": str(final_url)}
